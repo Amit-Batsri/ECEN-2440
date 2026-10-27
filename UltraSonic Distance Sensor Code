@@ -1,1 +1,42 @@
-code here:
+from machine import Pin, time_pulse_us
+import time
+
+TRIG_PIN = 14
+ECHO_PIN = 15
+SAMPLES = 50
+
+trig = Pin(TRIG_PIN, Pin.OUT, value=0)
+echo = Pin(ECHO_PIN, Pin.IN)
+
+
+def read_cm():
+    trig.value(0)
+    time.sleep_us(2)
+    trig.value(1)
+    time.sleep_us(10)
+    trig.value(0)
+    t = time_pulse_us(echo, 1, 30000)
+    if t < 0:
+        return None
+    return t / 58.3
+
+
+while True:
+    readings = []
+    timeouts = 0
+    for _ in range(SAMPLES):
+        d = read_cm()
+        if d is None:
+            timeouts += 1
+            print("timeout")
+        else:
+            readings.append(d)
+            print("{:.1f} cm".format(d))
+        time.sleep_ms(60)
+    if readings:
+        avg = sum(readings) / len(readings)
+        print("avg {:.1f} cm  min {:.1f}  max {:.1f}  timeouts {}/{}".format(
+            avg, min(readings), max(readings), timeouts, SAMPLES))
+    else:
+        print("no valid readings  timeouts {}/{}".format(timeouts, SAMPLES))
+    time.sleep(1)
