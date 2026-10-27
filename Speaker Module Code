@@ -1,12 +1,3 @@
-"""MicroPython speaker test for VS Code + MicroPico.
-
-Run this file ON THE PICO using 'MicroPico: Run Current File on Board'.
-Pico USB VBUS / physical pin 40 -> speaker module V.
-Pico GND / physical pin 23 -> speaker module G.
-Pico GP18 / physical pin 24 -> speaker module S.
-Start with module volume low. Test with motors and servo disconnected.
-"""
-
 from machine import Pin, PWM
 from time import sleep_ms
 
