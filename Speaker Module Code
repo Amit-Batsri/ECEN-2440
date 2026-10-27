@@ -1,1 +1,43 @@
-code here:
+"""MicroPython speaker test for VS Code + MicroPico.
+
+Run this file ON THE PICO using 'MicroPico: Run Current File on Board'.
+Pico USB VBUS / physical pin 40 -> speaker module V.
+Pico GND / physical pin 23 -> speaker module G.
+Pico GP18 / physical pin 24 -> speaker module S.
+Start with module volume low. Test with motors and servo disconnected.
+"""
+
+from machine import Pin, PWM
+from time import sleep_ms
+
+SPEAKER_PIN = 18  # GPIO number; physical pin is 24
+NOTES = ((523, 200), (659, 200), (784, 400))
+
+
+def main():
+    speaker = PWM(Pin(SPEAKER_PIN), freq=1000, duty_u16=0)
+    try:
+        print("Speaker test running on Pico GP18.")
+        print("Expect 3 rising notes, then 3 seconds of silence.")
+        print("Press Ctrl+C in the Pico terminal to stop.")
+
+        while True:
+            print("Playing tones...")
+            for frequency, duration in NOTES:
+                speaker.freq(frequency)
+                speaker.duty_u16(32768)  # 50% square wave
+                sleep_ms(duration)
+                speaker.duty_u16(0)
+                sleep_ms(100)
+            sleep_ms(3000)
+
+    except KeyboardInterrupt:
+        print("Speaker test stopped.")
+    finally:
+        speaker.duty_u16(0)
+        speaker.deinit()
+        Pin(SPEAKER_PIN, Pin.OUT, value=0)
+
+
+if __name__ == "__main__":
+    main()
