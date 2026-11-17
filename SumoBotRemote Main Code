@@ -1,0 +1,223 @@
+
+# ECEN 2440 - SumoBot Controller
+# Raspberry Pi Pico + Adafruit Gamepad QT + IR Transmitter
+
+from machine import I2C, Pin
+from ir_tx.nec import NEC
+import seesaw
+import time
+
+# -------------------------------------------------
+# Initialize I2C for Gamepad QT
+# -------------------------------------------------
+
+# Lab 12 uses GP16 and GP17.
+# Our IR transmitter uses GP17, so we use GP4 and GP5.
+
+i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=100000)
+
+# Initialize Seesaw device
+seesaw_device = seesaw.Seesaw(i2c, addr=0x50)
+# -------------------------------------------------
+# Initialize IR Transmitter (Lab 10)
+# -------------------------------------------------
+
+tx_pin = Pin(17, Pin.OUT, value=0)
+
+device_addr = 0x01
+transmitter = NEC(tx_pin)
+
+# Commands sent to SumoBot
+STOP = 0x00
+FORWARD = 0x01
+BACKWARD = 0x02
+LEFT = 0x03
+RIGHT = 0x04
+ARM = 0xA0
+DISARM = 0xA1
+
+# -------------------------------------------------
+# Gamepad buttons (Lab 12)
+# -------------------------------------------------
+
+BUTTON_A = 5
+BUTTON_B = 1
+BUTTON_X = 6
+BUTTON_Y = 2
+BUTTON_START = 16
+BUTTON_SELECT = 0
+
+JOYSTICK_X_PIN = 14
+JOYSTICK_Y_PIN = 15
+
+BUTTONS_MASK = (
+    (1 << BUTTON_X) |
+    (1 << BUTTON_Y) |
+    (1 << BUTTON_A) |
+    (1 << BUTTON_B) |
+    (1 << BUTTON_SELECT) |
+    (1 << BUTTON_START)
+)
+
+# Joystick center values from Lab 12
+joystick_center_x = 511
+joystick_center_y = 497
+
+# Deadzone to prevent accidental movement
+joystick_threshold = 100
+
+
+# -------------------------------------------------
+# Set up Gamepad buttons
+# -------------------------------------------------
+
+def setup_buttons():
+    seesaw_device.pin_mode_bulk(
+        BUTTONS_MASK,
+        seesaw_device.INPUT_PULLUP
+    )
+
+
+# -------------------------------------------------
+# Read button states
+# -------------------------------------------------
+
+def read_buttons():
+    return seesaw_device.digital_read_bulk(BUTTONS_MASK)
+
+
+def is_pressed(buttons, pin):
+    # Pull-up buttons are LOW when pressed
+    return (buttons & (1 << pin)) == 0
+
+
+# -------------------------------------------------
+# Read joystick position
+# -------------------------------------------------
+
+def read_joystick():
+    x_value = seesaw_device.analog_read(JOYSTICK_X_PIN)
+    y_value = seesaw_device.analog_read(JOYSTICK_Y_PIN)
+
+    return x_value, y_value
+
+
+# -------------------------------------------------
+# Determine direction
+# -------------------------------------------------
+
+def get_direction(x, y):
+
+    dx = x - joystick_center_x
+    dy = y - joystick_center_y
+
+    if max(abs(dx), abs(dy)) <= joystick_threshold:
+        return STOP
+
+    if abs(dy) >= abs(dx):
+        if dy < 0:
+            return FORWARD
+        else:
+            return BACKWARD
+
+    if dx < 0:
+        return LEFT
+    else:
+        return RIGHT
+
+
+# -------------------------------------------------
+# Send IR command
+# -------------------------------------------------
+
+def send_command(command):
+
+    transmitter.transmit(device_addr, command)
+
+    print("Command transmitted:", hex(command))
+
+
+# -------------------------------------------------
+# Main program
+# -------------------------------------------------
+
+def main():
+
+    setup_buttons()
+
+    armed = False
+    last_buttons = BUTTONS_MASK
+
+    print("SumoBot Controller Ready")
+    print("Press START to arm")
+    print("Press SELECT to stop")
+
+    while True:
+
+        try:
+            current_buttons = read_buttons()
+            x, y = read_joystick()
+
+            # Check for new START button press
+            start_pressed = (
+                is_pressed(current_buttons, BUTTON_START)
+                and not is_pressed(last_buttons, BUTTON_START)
+            )
+
+            # Check for new SELECT button press
+            select_pressed = (
+                is_pressed(current_buttons, BUTTON_SELECT)
+                and not is_pressed(last_buttons, BUTTON_SELECT)
+            )
+
+            if select_pressed:
+                armed = False
+                command = DISARM
+                print("SumoBot Disarmed")
+
+            elif start_pressed:
+                armed = True
+                command = ARM
+                print("SumoBot Armed")
+
+            elif not armed:
+                command = STOP
+
+            # Direction buttons
+            elif is_pressed(current_buttons, BUTTON_A):
+                command = FORWARD
+
+            elif is_pressed(current_buttons, BUTTON_B):
+                command = BACKWARD
+
+            elif is_pressed(current_buttons, BUTTON_X):
+                command = LEFT
+
+            elif is_pressed(current_buttons, BUTTON_Y):
+                command = RIGHT
+
+            # Joystick controls
+            else:
+                command = get_direction(x, y)
+
+            send_command(command)
+
+            last_buttons = current_buttons
+
+        except Exception as error:
+            print("Controller error:", error)
+            armed = False
+            last_buttons = BUTTONS_MASK
+            send_command(DISARM)
+
+        # Small delay between commands
+        time.sleep(0.12)
+
+
+# Run program
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        send_command(DISARM)
+        print("Controller stopped")
