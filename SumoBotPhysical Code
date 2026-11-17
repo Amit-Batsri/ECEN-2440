@@ -1,0 +1,303 @@
+
+# ECEN 2440 - SumoBot Robot
+# Raspberry Pi Pico + IR Receiver + DRV8835
+# Compatible with the Gamepad QT controller code
+
+from machine import Pin, PWM
+from ir_rx.nec import NEC_8
+import time
+
+# ----------------------------------------
+# PIN CONFIGURATION
+# ----------------------------------------
+
+# IR Receiver
+IR_PIN = 15
+
+# DRV8835 Motor Driver (example wiring)
+A_PHASE = 10
+A_ENABLE = 11
+
+B_PHASE = 12
+B_ENABLE = 13
+
+# Change these if a motor spins backward
+A_REVERSED = False
+B_REVERSED = False
+
+# ----------------------------------------
+# MOTOR SETTINGS
+# ----------------------------------------
+
+PWM_FREQUENCY = 20000
+
+# Start with reduced motor speed
+MOTOR_SPEED = 28000
+
+# Start delay from SumoBot project
+START_DELAY = 5
+
+# Stop robot if IR commands stop arriving
+SIGNAL_TIMEOUT = 650
+
+# ----------------------------------------
+# IR COMMANDS
+# Must match handheld controller
+# ----------------------------------------
+
+DEVICE_ADDR = 0x01
+
+STOP = 0x00
+FORWARD = 0x01
+BACKWARD = 0x02
+LEFT = 0x03
+RIGHT = 0x04
+ARM = 0xA0
+DISARM = 0xA1
+
+VALID_COMMANDS = (
+    STOP, FORWARD, BACKWARD,
+    LEFT, RIGHT, ARM, DISARM
+)
+
+# ----------------------------------------
+# MOTOR INITIALIZATION
+# ----------------------------------------
+
+# Motor A (left motor)
+motor_a_phase = Pin(A_PHASE, Pin.OUT, value=0)
+motor_a_pwm = PWM(Pin(A_ENABLE))
+motor_a_pwm.freq(PWM_FREQUENCY)
+motor_a_pwm.duty_u16(0)
+
+# Motor B (right motor)
+motor_b_phase = Pin(B_PHASE, Pin.OUT, value=0)
+motor_b_pwm = PWM(Pin(B_ENABLE))
+motor_b_pwm.freq(PWM_FREQUENCY)
+motor_b_pwm.duty_u16(0)
+
+
+# ----------------------------------------
+# MOTOR CONTROL FUNCTIONS
+# ----------------------------------------
+
+def motor_a(speed):
+
+    # Apply motor direction correction
+    if A_REVERSED:
+        speed = -speed
+
+    motor_a_pwm.duty_u16(0)
+
+    if speed >= 0:
+        motor_a_phase.value(0)
+    else:
+        motor_a_phase.value(1)
+
+    motor_a_pwm.duty_u16(min(abs(speed), 65535))
+
+
+def motor_b(speed):
+
+    if B_REVERSED:
+        speed = -speed
+
+    motor_b_pwm.duty_u16(0)
+
+    if speed >= 0:
+        motor_b_phase.value(0)
+    else:
+        motor_b_phase.value(1)
+
+    motor_b_pwm.duty_u16(min(abs(speed), 65535))
+
+
+def stop_motors():
+
+    motor_a_pwm.duty_u16(0)
+    motor_b_pwm.duty_u16(0)
+
+
+# ----------------------------------------
+# SUMOBOT MOVEMENT
+# ----------------------------------------
+
+def move_forward():
+
+    motor_a(MOTOR_SPEED)
+    motor_b(MOTOR_SPEED)
+    print("Moving Forward")
+
+
+def move_backward():
+
+    motor_a(-MOTOR_SPEED)
+    motor_b(-MOTOR_SPEED)
+    print("Moving Backward")
+
+
+def turn_left():
+
+    motor_a(-MOTOR_SPEED)
+    motor_b(MOTOR_SPEED)
+    print("Turning Left")
+
+
+def turn_right():
+
+    motor_a(MOTOR_SPEED)
+    motor_b(-MOTOR_SPEED)
+    print("Turning Right")
+
+
+def execute_command(command):
+
+    if command == FORWARD:
+        move_forward()
+
+    elif command == BACKWARD:
+        move_backward()
+
+    elif command == LEFT:
+        turn_left()
+
+    elif command == RIGHT:
+        turn_right()
+
+    else:
+        stop_motors()
+        print("Motors Stopped")
+
+
+# ----------------------------------------
+# IR RECEIVER
+# ----------------------------------------
+
+# The callback stores the newest command.
+# Motor control happens in the main loop.
+
+received_command = None
+
+
+def ir_callback(data, addr, ctrl):
+
+    global received_command
+
+    if data >= 0 and addr == DEVICE_ADDR:
+
+        if data in VALID_COMMANDS:
+            received_command = data
+
+
+# ----------------------------------------
+# MAIN PROGRAM
+# ----------------------------------------
+
+def main():
+
+    global received_command
+
+    stop_motors()
+
+    print("Starting SumoBot...")
+    print("Waiting 5 seconds...")
+
+    time.sleep(START_DELAY)
+
+    # Initialize IR receiver
+    ir_pin = Pin(IR_PIN, Pin.IN, Pin.PULL_UP)
+    receiver = NEC_8(ir_pin, ir_callback)
+
+    armed = False
+    last_command = STOP
+    last_signal_time = time.ticks_ms()
+
+    print("SumoBot Ready")
+    print("Waiting for controller START command")
+
+    try:
+
+        while True:
+
+            # Check if a new IR command arrived
+            if received_command is not None:
+
+                command = received_command
+                received_command = None
+
+                last_signal_time = time.ticks_ms()
+
+                # START button
+                if command == ARM:
+
+                    if not armed:
+                        armed = True
+                        print("SumoBot Armed")
+
+                    stop_motors()
+                    last_command = STOP
+
+                # SELECT button
+                elif command == DISARM:
+
+                    armed = False
+                    stop_motors()
+                    last_command = STOP
+                    print("SumoBot Disarmed")
+
+                # Ignore movement while disarmed
+                elif not armed:
+
+                    stop_motors()
+                    last_command = STOP
+
+                # Stop command
+                elif command == STOP:
+
+                    if last_command != STOP:
+                        stop_motors()
+                        print("Motors Stopped")
+
+                    last_command = STOP
+
+                # Movement commands
+                else:
+
+                    if command != last_command:
+                        execute_command(command)
+                        last_command = command
+
+            # --------------------------------
+            # IR SIGNAL TIMEOUT
+            # --------------------------------
+
+            elapsed = time.ticks_diff(
+                time.ticks_ms(),
+                last_signal_time
+            )
+
+            if elapsed > SIGNAL_TIMEOUT:
+
+                if armed:
+                    print("IR Signal Lost")
+                    print("Stopping SumoBot")
+
+                stop_motors()
+                armed = False
+                last_command = STOP
+
+            time.sleep_ms(20)
+
+    finally:
+
+        stop_motors()
+        receiver.close()
+        print("SumoBot Stopped")
+
+
+# ----------------------------------------
+# RUN PROGRAM
+# ----------------------------------------
+
+if __name__ == "__main__":
+    main()
